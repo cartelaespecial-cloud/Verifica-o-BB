@@ -27,8 +27,24 @@
   }
 }
 
+@keyframes faceScanBeam {
+  0% {
+    transform: translateY(0%);
+  }
+  50% {
+    transform: translateY(220px);
+  }
+  100% {
+    transform: translateY(0%);
+  }
+}
+
 .animate-auth-bar {
   animation: authProgressSlide 1.25s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.animate-face-scan {
+  animation: faceScanBeam 1.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

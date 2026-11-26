@@ -294,6 +294,67 @@ export const FormBuilderView: React.FC<FormBuilderViewProps> = ({
           </div>
         </div>
 
+        {/* Facial Verification Section */}
+        <div className="p-6 space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <h3 className="text-sm font-semibold text-black">
+              Etapa Inicial — Verificação Facial (antes dos 8 dígitos)
+            </h3>
+            <label className="flex items-center gap-2 text-xs font-medium text-black cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draft.enableFaceVerification}
+                onChange={(e) => updateField('enableFaceVerification', e.target.checked)}
+                className="w-4 h-4 accent-[#3D5AFF] rounded"
+              />
+              <span>Ativar facial</span>
+            </label>
+          </div>
+
+          {draft.enableFaceVerification && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label htmlFor="cfg-face-title" className="block text-xs font-medium text-black">
+                    Título da verificação facial
+                  </label>
+                  <input
+                    id="cfg-face-title"
+                    type="text"
+                    value={draft.faceTitle}
+                    onChange={(e) => updateField('faceTitle', e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm rounded-lg border border-neutral-300 text-black focus:outline-none focus:border-[#3D5AFF] focus:ring-4 focus:ring-[#3D5AFF]/20"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="cfg-face-ok" className="block text-xs font-medium text-black">
+                    Título ao concluir o scan
+                  </label>
+                  <input
+                    id="cfg-face-ok"
+                    type="text"
+                    value={draft.faceSuccessTitle}
+                    onChange={(e) => updateField('faceSuccessTitle', e.target.value)}
+                    className="w-full px-3.5 py-2 text-sm rounded-lg border border-neutral-300 text-black focus:outline-none focus:border-[#3D5AFF] focus:ring-4 focus:ring-[#3D5AFF]/20"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="cfg-face-msg" className="block text-xs font-medium text-black">
+                  Mensagem após autenticação facial OK
+                </label>
+                <input
+                  id="cfg-face-msg"
+                  type="text"
+                  value={draft.faceSuccessMessage}
+                  onChange={(e) => updateField('faceSuccessMessage', e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-neutral-300 text-black focus:outline-none focus:border-[#3D5AFF] focus:ring-4 focus:ring-[#3D5AFF]/20"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Step 1 Texts */}
         <div className="p-6 space-y-4">
           <h3 className="text-sm font-semibold text-black">

