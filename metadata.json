@@ -1,0 +1,6 @@
+{
+  "name": "VerifForm — Plataforma de Formulário e Verificação",
+  "description": "Plataforma de formulário com verificação em duas etapas: código de 8 dígitos e confirmação de 4 dígitos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
